@@ -100,17 +100,16 @@ class HW_HalfBandFIR:
                 # A input
                 even_input_delays[i,j,1] = -((2 * (i + j + 1) - self.N_TAPS - 1) // self.N_SAMP_IN) + stage_delay 
                 stage_delay += 2
+        # prune out extra shift register stages (this will be fun to implement in parameterizable Verilog that synthesizes)
         m = np.min(even_input_delays)
         even_input_delays -= m
         odd_input_delays -= m
+        # delay from x0 to output (through D input of DSP48, hence the 4)
         self.TOTAL_LATENCY = even_input_delays[0,0,0] + 4 + 1
         for i in range(self.N_SAMP_OUT):
             self.SHIFTREGS_ODD[i] = Shiftreg(odd_input_delays[i])
             self.SHIFTREGS_EVEN[i] = [None for j in range(2*self.FILTER_DEPTH)]
             for j in range(self.FILTER_DEPTH):
-                #d_max = even_input_delays[i,j,0] + 5 + 2*j - 1
-                #if d_max > self.TOTAL_LATENCY:
-                #    self.TOTAL_LATENCY = d_max
                 self.SHIFTREGS_EVEN[i][2*j] = Shiftreg(even_input_delays[i,j,0]) # D input
                 self.SHIFTREGS_EVEN[i][2*j+1] = Shiftreg(even_input_delays[i,j,1]) # A input
         if self.DEBUG:
@@ -142,18 +141,15 @@ if __name__ == '__main__':
     T_in = 1e-6
     N_in = int(fs_in*T_in)
     t_in = np.linspace(0,T_in,N_in) # s
-    #x = np.sin(2*np.pi*5e6*t_in) #+ 0.2*np.random.randn(N_in) + np.sin(2*np.pi*fs_in/3*t_in)
-    #x = np.sin(2*np.pi*fs_in/3*t_in)
-    #x = 0.2*np.random.randn(N_in)
-    x = np.sin(2*np.pi*5e6*t_in) + np.sin(2*np.pi*fs_in/3*t_in)
+    x = np.sin(2*np.pi*5e6*t_in) + 0.2*np.random.randn(N_in) + np.sin(2*np.pi*fs_in/3*t_in)
 
-    for k in range(3):
+    for k in range(1):
         if k == 0:
-            N_SAMP_ADC = 4 # samples per cycle from ADC
+            N_SAMP_ADC = 16 # samples per cycle from ADC
         elif k == 1:
             N_SAMP_ADC = 8 # samples per cycle from ADC
         else:
-            N_SAMP_ADC = 16 # samples per cycle from ADC
+            N_SAMP_ADC = 4
 
         # initialize FIR taps
         firs = [FIR0a(), FIR0(), FIR1(), FIR2()]
@@ -178,17 +174,17 @@ if __name__ == '__main__':
         for i in range(len(firs)):
             if not plot[i]:
                 continue
-            fig, ax = plt.subplots(3,1,sharex=True)
-            ax[0].plot(t_in, x, label='input')
-            ax[1].plot(t_in[::2], sw_sim_result[i], label=f'fir{i} software impl')
-            ax[1].plot(t_in[::2], sw_poly_sim_result[i], label=f'fir{i} software (polyphase) impl')
-            ax[1].plot(t_in[::2], hw_sim_result[i], label=f'fir{i} hardware impl')
-            t_in_trim = t_in[:-hw_sim_firs[i].TOTAL_LATENCY*N_SAMP_ADC:2]
-            fir_sw_poly_trim = sw_poly_sim_result[i][:-hw_sim_firs[i].TOTAL_LATENCY*(N_SAMP_ADC//2)]
-            fir_hw_trim = hw_sim_result[i,:-hw_sim_firs[i].TOTAL_LATENCY*(N_SAMP_ADC//2)]
-            ax[2].plot(t_in_trim, fir_sw_poly_trim - fir_hw_trim, label='error')
+            fig, ax = plt.subplots(4,1,sharex=True)
+            L_cyc = hw_sim_firs[i].TOTAL_LATENCY
+            L_samp = L_cyc*(N_SAMP_ADC//2) # div by 2 because output is decimated
+            ax[0].plot(1e6*t_in[:-2*L_samp], x[:-2*L_samp], label='input')
+            ax[1].plot(1e6*t_in[:-2*L_samp:2], sw_sim_result[i][:-L_samp], label=f'fir{i} software impl')
+            ax[1].plot(1e6*t_in[:-2*L_samp:2], sw_poly_sim_result[i][:-L_samp], label=f'fir{i} software (polyphase) impl')
+            ax[2].plot(1e6*t_in[:-2*L_samp:2], hw_sim_result[i,:-L_samp], label=f'fir{i} hardware impl')
+            ax[3].plot(1e6*t_in[:-2*L_samp:2], sw_poly_sim_result[i][:-L_samp] - hw_sim_result[i,:-L_samp], label='error')
+            ax[3].set_xlabel('t [us]')
             for j in range(len(ax)):
                 ax[j].legend()
-            fig.suptitle(f'firidx = {i}, N_TAPS = {firs[i].N_TAPS}, N_SAMP_ADC = {N_SAMP_ADC}')
+            fig.suptitle(f'N_TAPS = {firs[i].N_TAPS}, Samp/cyc in = {N_SAMP_ADC}')
 
     plt.show()
